@@ -10,9 +10,13 @@ const firebaseConfig = {
 };
 
 // 全局变量
+let app = null;
+let analytics = null;
 let db = null;
 let salesCollection = null;
 let isInitialized = false;
+let initializeRetryCount = 0;
+const MAX_RETRY_ATTEMPTS = 3;
 
 // 初始化 Firebase
 async function initializeFirebase() {
@@ -21,8 +25,12 @@ async function initializeFirebase() {
     return true;
   }
 
+  if (initializeRetryCount >= MAX_RETRY_ATTEMPTS) {
+    throw new Error(`初始化失败，已重试 ${MAX_RETRY_ATTEMPTS} 次`);
+  }
+
   try {
-    console.log('开始初始化 Firebase...');
+    console.log(`开始初始化 Firebase... (尝试 ${initializeRetryCount + 1}/${MAX_RETRY_ATTEMPTS})`);
     
     // 检查 Firebase 模块是否已加载
     const modules = window.firebaseModules;
@@ -30,31 +38,78 @@ async function initializeFirebase() {
       throw new Error('Firebase 模块未加载，请检查网络连接');
     }
     
-    // 初始化应用
-    const app = modules.initializeApp(firebaseConfig);
-    console.log('Firebase 应用初始化成功');
+    // 初始化 Firebase 应用
+    if (!app) {
+      app = modules.initializeApp(firebaseConfig);
+      console.log('Firebase 应用初始化成功');
+      
+      // 初始化 Analytics（可选）
+      try {
+        analytics = modules.getAnalytics(app);
+        console.log('Firebase Analytics 初始化成功');
+      } catch (analyticsError) {
+        console.warn('Analytics 初始化失败（非关键错误）:', analyticsError);
+      }
+    }
     
     // 初始化 Firestore
-    db = modules.getFirestore(app);
-    console.log('Firestore 初始化成功');
+    if (!db) {
+      db = modules.getFirestore(app);
+      
+      // 启用离线持久化
+      try {
+        await modules.enableIndexedDbPersistence(db);
+        console.log('离线持久化已启用');
+      } catch (persistenceError) {
+        if (persistenceError.code === 'failed-precondition') {
+          console.warn('多个标签页打开，离线持久化仅能在一个标签页中启用');
+        } else if (persistenceError.code === 'unimplemented') {
+          console.warn('当前浏览器不支持离线持久化');
+        }
+      }
+      
+      console.log('Firestore 初始化成功');
+    }
     
     // 初始化集合引用
-    salesCollection = modules.collection(db, 'salesData');
-    console.log('销售数据集合已初始化');
+    if (!salesCollection) {
+      salesCollection = modules.collection(db, 'salesData');
+      console.log('销售数据集合已初始化');
+    }
     
     // 测试集合访问
-    const testQuery = modules.query(salesCollection, modules.limit(1));
-    await modules.getDocs(testQuery);
-    console.log('集合访问测试成功');
+    try {
+      const testQuery = modules.query(salesCollection, modules.limit(1));
+      const testSnapshot = await modules.getDocs(testQuery);
+      console.log('集合访问测试成功，当前记录数:', testSnapshot.size);
+    } catch (testError) {
+      console.error('集合访问测试失败:', testError);
+      if (testError.code === 'permission-denied') {
+        showNotification('Firebase 权限错误：请检查 Firestore 安全规则', 'error');
+      } else {
+        showNotification('数据库连接测试失败：' + testError.message, 'error');
+      }
+      throw testError;
+    }
     
     isInitialized = true;
+    initializeRetryCount = 0;
     return true;
     
   } catch (error) {
     console.error('Firebase 初始化失败:', error);
     isInitialized = false;
+    app = null;
     db = null;
     salesCollection = null;
+    initializeRetryCount++;
+    
+    if (initializeRetryCount < MAX_RETRY_ATTEMPTS) {
+      console.log(`将在 3 秒后重试初始化... (${initializeRetryCount}/${MAX_RETRY_ATTEMPTS})`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      return initializeFirebase();
+    }
+    
     throw error;
   }
 }
@@ -70,7 +125,13 @@ function setupRealtimeListener(callback) {
     console.log('设置实时数据监听...');
     const modules = window.firebaseModules;
     
-    const q = modules.query(salesCollection, modules.orderBy('date', 'desc'));
+    // 创建查询
+    const q = modules.query(
+      salesCollection,
+      modules.orderBy('date', 'desc')
+    );
+    
+    // 设置监听器
     return modules.onSnapshot(q,
       snapshot => {
         console.log('收到实时数据更新:', snapshot.size + '条记录');
@@ -83,6 +144,11 @@ function setupRealtimeListener(callback) {
       error => {
         console.error('实时数据监听错误:', error);
         showNotification('数据同步失败: ' + error.message, 'error');
+        
+        // 如果是权限错误，提供更详细的提示
+        if (error.code === 'permission-denied') {
+          showNotification('没有访问权限，请检查 Firestore 安全规则', 'error');
+        }
       }
     );
   } catch (error) {
@@ -100,9 +166,12 @@ async function fetchSalesData() {
     }
     
     const modules = window.firebaseModules;
-    const q = modules.query(salesCollection, modules.orderBy('date', 'desc'));
-    const snapshot = await modules.getDocs(q);
+    const q = modules.query(
+      salesCollection,
+      modules.orderBy('date', 'desc')
+    );
     
+    const snapshot = await modules.getDocs(q);
     return snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
@@ -122,7 +191,15 @@ async function addSalesRecord(record) {
     }
     
     const modules = window.firebaseModules;
-    const docRef = await modules.addDoc(salesCollection, record);
+    
+    // 添加服务器时间戳
+    const recordWithTimestamp = {
+      ...record,
+      createdAt: modules.serverTimestamp(),
+      updatedAt: modules.serverTimestamp()
+    };
+    
+    const docRef = await modules.addDoc(salesCollection, recordWithTimestamp);
     showNotification('数据添加成功！');
     return docRef.id;
   } catch (error) {
@@ -140,8 +217,15 @@ async function updateSalesRecord(id, updatedRecord) {
     }
     
     const modules = window.firebaseModules;
+    
+    // 添加更新时间戳
+    const recordWithTimestamp = {
+      ...updatedRecord,
+      updatedAt: modules.serverTimestamp()
+    };
+    
     const docRef = modules.doc(db, 'salesData', id);
-    await modules.updateDoc(docRef, updatedRecord);
+    await modules.updateDoc(docRef, recordWithTimestamp);
     showNotification('数据更新成功！');
     return true;
   } catch (error) {

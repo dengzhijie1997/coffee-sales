@@ -9,15 +9,15 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Firebase SDK -->
     <script type="module">
+        // 导入 Firebase 核心功能
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-        import { getFirestore, collection, query, orderBy, onSnapshot, addDoc, deleteDoc, updateDoc, doc, getDocs, limit } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
         
-        // 将Firebase模块暴露给全局作用域
-        window.firebaseModules = {
-            initializeApp,
+        // 导入 Firestore 相关功能
+        import { 
             getFirestore,
             collection,
             query,
+            where,
             orderBy,
             onSnapshot,
             addDoc,
@@ -25,7 +25,37 @@
             updateDoc,
             doc,
             getDocs,
-            limit
+            limit,
+            serverTimestamp,
+            enableIndexedDbPersistence,
+            CACHE_SIZE_UNLIMITED
+        } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+        // 导入 Firebase Analytics（可选）
+        import { getAnalytics } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
+        
+        // 将所有 Firebase 模块暴露给全局作用域
+        window.firebaseModules = {
+            // 核心功能
+            initializeApp,
+            getAnalytics,
+            
+            // Firestore 功能
+            getFirestore,
+            collection,
+            query,
+            where,
+            orderBy,
+            onSnapshot,
+            addDoc,
+            deleteDoc,
+            updateDoc,
+            doc,
+            getDocs,
+            limit,
+            serverTimestamp,
+            enableIndexedDbPersistence,
+            CACHE_SIZE_UNLIMITED
         };
     </script>
     <!-- 确保Firebase配置最后加载 -->
