@@ -10,7 +10,6 @@ const firebaseConfig = {
 };
 
 // 全局变量
-let app = null;
 let db = null;
 let salesCollection = null;
 
@@ -20,42 +19,44 @@ async function initializeFirebase() {
     console.log('开始初始化 Firebase...');
     
     // 检查 Firebase SDK 是否已加载
-    if (!window.firebaseModules) {
+    if (typeof firebase === 'undefined') {
       throw new Error('Firebase SDK 未加载，请检查网络连接');
     }
     
-    const { 
-      initializeApp,
-      getFirestore,
-      collection,
-      query,
-      orderBy,
-      limit,
-      getDocs
-    } = window.firebaseModules;
-    
     // 初始化应用
-    if (!app) {
-      app = initializeApp(firebaseConfig);
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
       console.log('Firebase 应用初始化成功');
     }
     
     // 初始化 Firestore
     if (!db) {
-      db = getFirestore(app);
-      console.log('Firestore 初始化成功');
+      db = firebase.firestore();
+      
+      // 配置 Firestore
+      db.settings({
+        cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED,
+        ignoreUndefinedProperties: true,
+        experimentalForceLongPolling: true
+      });
+      
+      console.log('Firestore 设置已应用');
     }
     
     // 初始化集合引用
     if (!salesCollection) {
-      salesCollection = collection(db, 'salesData');
+      salesCollection = db.collection('salesData');
       console.log('销售数据集合已初始化');
     }
     
     // 测试集合访问
-    const testQuery = query(salesCollection, limit(1));
-    const testSnapshot = await getDocs(testQuery);
-    console.log('集合访问测试成功，记录数:', testSnapshot.size);
+    try {
+      const testQuery = await salesCollection.limit(1).get();
+      console.log('集合访问测试成功，记录数:', testQuery.size);
+    } catch (error) {
+      console.error('集合访问测试失败:', error);
+      throw new Error('无法访问数据集合，请检查网络连接和权限设置');
+    }
     
     return true;
   } catch (error) {
@@ -69,36 +70,29 @@ function setupRealtimeListener(callback) {
   try {
     console.log('设置实时数据监听...');
     
-    const {
-      query,
-      orderBy,
-      onSnapshot
-    } = window.firebaseModules;
-    
-    if (!salesCollection) {
-      throw new Error('销售数据集合未初始化');
+    if (!db || !salesCollection) {
+      throw new Error('Firebase未初始化，请先初始化Firebase');
     }
     
-    // 创建查询
-    const q = query(salesCollection, orderBy('date', 'desc'));
-    
     // 设置监听器
-    return onSnapshot(q,
-      snapshot => {
-        console.log('收到实时数据更新:', snapshot.size + '条记录');
-        const data = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        callback(data);
-      },
-      error => {
-        console.error('实时数据监听错误:', error);
-        if (typeof window.appShowNotification === 'function') {
-          window.appShowNotification('数据同步失败: ' + error.message, 'error');
+    return salesCollection
+      .orderBy('date', 'desc')
+      .onSnapshot(
+        snapshot => {
+          console.log('收到实时数据更新:', snapshot.size + '条记录');
+          const data = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          callback(data);
+        },
+        error => {
+          console.error('实时数据监听错误:', error);
+          if (typeof window.appShowNotification === 'function') {
+            window.appShowNotification('数据同步失败: ' + error.message, 'error');
+          }
         }
-      }
-    );
+      );
   } catch (error) {
     console.error('设置数据监听失败:', error);
     if (typeof window.appShowNotification === 'function') {
@@ -111,18 +105,13 @@ function setupRealtimeListener(callback) {
 // 获取所有销售数据
 async function fetchSalesData() {
   try {
-    const {
-      query,
-      orderBy,
-      getDocs
-    } = window.firebaseModules;
-    
-    if (!salesCollection) {
-      throw new Error('销售数据集合未初始化');
+    if (!db || !salesCollection) {
+      throw new Error('Firebase未初始化，请先初始化Firebase');
     }
     
-    const q = query(salesCollection, orderBy('date', 'desc'));
-    const snapshot = await getDocs(q);
+    const snapshot = await salesCollection
+      .orderBy('date', 'desc')
+      .get();
     
     return snapshot.docs.map(doc => ({
       id: doc.id,
@@ -140,13 +129,11 @@ async function fetchSalesData() {
 // 添加销售记录
 async function addSalesRecord(record) {
   try {
-    const { addDoc } = window.firebaseModules;
-    
-    if (!salesCollection) {
-      throw new Error('销售数据集合未初始化');
+    if (!db || !salesCollection) {
+      throw new Error('Firebase未初始化，请先初始化Firebase');
     }
     
-    const docRef = await addDoc(salesCollection, record);
+    const docRef = await salesCollection.add(record);
     if (typeof window.appShowNotification === 'function') {
       window.appShowNotification('数据添加成功！');
     }
@@ -163,15 +150,11 @@ async function addSalesRecord(record) {
 // 更新销售记录
 async function updateSalesRecord(id, updatedRecord) {
   try {
-    const { doc, updateDoc } = window.firebaseModules;
-    
     if (!db || !salesCollection) {
-      throw new Error('销售数据集合未初始化');
+      throw new Error('Firebase未初始化，请先初始化Firebase');
     }
     
-    const docRef = doc(db, 'salesData', id);
-    await updateDoc(docRef, updatedRecord);
-    
+    await salesCollection.doc(id).update(updatedRecord);
     if (typeof window.appShowNotification === 'function') {
       window.appShowNotification('数据更新成功！');
     }
@@ -188,15 +171,11 @@ async function updateSalesRecord(id, updatedRecord) {
 // 删除销售记录
 async function deleteSalesRecord(id) {
   try {
-    const { doc, deleteDoc } = window.firebaseModules;
-    
     if (!db || !salesCollection) {
-      throw new Error('销售数据集合未初始化');
+      throw new Error('Firebase未初始化，请先初始化Firebase');
     }
     
-    const docRef = doc(db, 'salesData', id);
-    await deleteDoc(docRef);
-    
+    await salesCollection.doc(id).delete();
     if (typeof window.appShowNotification === 'function') {
       window.appShowNotification('数据删除成功！');
     }

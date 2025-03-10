@@ -24,8 +24,11 @@ async function initApp() {
         // 导出显示通知函数给Firebase模块使用
         window.appShowNotification = showNotification;
         
-        // 加载数据
-        setupRealtimeDataSync();
+        // 初始化Firebase并设置数据同步
+        await initializeFirebase();
+        
+        // 设置实时数据同步
+        setupDataSync();
         
         // 隐藏加载屏幕
         setTimeout(() => {
@@ -144,10 +147,10 @@ function resetForm() {
     document.getElementById('notes').value = '';
 }
 
-// 设置实时数据同步
-function setupRealtimeDataSync() {
+// 设置数据同步
+function setupDataSync() {
     try {
-        console.log('开始设置实时数据同步...');
+        console.log('设置数据同步...');
         
         // 取消之前的监听（如果有）
         if (unsubscribe) {
@@ -155,38 +158,21 @@ function setupRealtimeDataSync() {
             unsubscribe = null;
         }
         
-        // 先测试连接
-        testFirebaseConnection()
-            .then(() => {
-                console.log('Firebase连接测试成功，开始设置监听器');
-                
-                // 重要：确保Firebase配置模块已正确加载
-                if (typeof setupRealtimeListener !== 'function') {
-                    throw new Error('Firebase功能未正确加载，请刷新页面');
-                }
-                
-                // 设置新的监听
-                const listener = setupRealtimeListener(data => {
-                    console.log('收到数据更新，共' + data.length + '条记录');
-                    salesData = data;
-                    updateUI();
-                });
-                
-                if (listener) {
-                    unsubscribe = listener;
-                    console.log('数据同步设置成功');
-                } else {
-                    console.error('无法设置数据监听');
-                    showNotification('无法设置数据同步，请刷新页面重试', 'error');
-                }
-            })
-            .catch(error => {
-                console.error('Firebase连接失败:', error);
-                showNotification('数据库连接失败: ' + error.message, 'error');
-            });
+        // 设置新的监听
+        unsubscribe = setupRealtimeListener(data => {
+            console.log('收到数据更新，共' + data.length + '条记录');
+            salesData = data;
+            updateUI();
+        });
+        
+        if (!unsubscribe) {
+            throw new Error('无法设置数据同步');
+        }
+        
+        console.log('数据同步设置成功');
     } catch (error) {
-        console.error('设置实时数据同步失败:', error);
-        showNotification('数据同步设置失败: ' + error.message, 'error');
+        console.error('设置数据同步失败:', error);
+        showNotification('数据同步失败: ' + error.message, 'error');
     }
 }
 
