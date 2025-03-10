@@ -28,7 +28,7 @@ async function initApp() {
         await initializeFirebase();
         
         // 设置实时数据同步
-        setupDataSync();
+        await setupDataSync();
         
         // 隐藏加载屏幕
         setTimeout(() => {
@@ -148,9 +148,14 @@ function resetForm() {
 }
 
 // 设置数据同步
-function setupDataSync() {
+async function setupDataSync() {
     try {
         console.log('设置数据同步...');
+        
+        // 确保 Firebase 已初始化
+        if (!window.firebase) {
+            throw new Error('Firebase 未初始化');
+        }
         
         // 取消之前的监听（如果有）
         if (unsubscribe) {
@@ -158,7 +163,7 @@ function setupDataSync() {
             unsubscribe = null;
         }
         
-        // 设置新的监听
+        // 从 firebase-config.js 获取实时数据监听函数
         unsubscribe = setupRealtimeListener(data => {
             console.log('收到数据更新，共' + data.length + '条记录');
             salesData = data;
@@ -170,9 +175,12 @@ function setupDataSync() {
         }
         
         console.log('数据同步设置成功');
+        showNotification('数据同步已启动');
+        
     } catch (error) {
         console.error('设置数据同步失败:', error);
         showNotification('数据同步失败: ' + error.message, 'error');
+        throw error; // 向上传播错误
     }
 }
 

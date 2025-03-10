@@ -12,92 +12,82 @@ const firebaseConfig = {
 // 全局变量
 let db = null;
 let salesCollection = null;
+let isInitialized = false;
 
 // 初始化 Firebase
 async function initializeFirebase() {
+  if (isInitialized) {
+    console.log('Firebase 已经初始化');
+    return true;
+  }
+
   try {
     console.log('开始初始化 Firebase...');
     
-    // 检查 Firebase SDK 是否已加载
-    if (typeof firebase === 'undefined') {
-      throw new Error('Firebase SDK 未加载，请检查网络连接');
+    // 检查 Firebase 模块是否已加载
+    const modules = window.firebaseModules;
+    if (!modules) {
+      throw new Error('Firebase 模块未加载，请检查网络连接');
     }
     
     // 初始化应用
-    if (!firebase.apps.length) {
-      firebase.initializeApp(firebaseConfig);
-      console.log('Firebase 应用初始化成功');
-    }
+    const app = modules.initializeApp(firebaseConfig);
+    console.log('Firebase 应用初始化成功');
     
     // 初始化 Firestore
-    if (!db) {
-      db = firebase.firestore();
-      
-      // 配置 Firestore
-      db.settings({
-        cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED,
-        ignoreUndefinedProperties: true,
-        experimentalForceLongPolling: true
-      });
-      
-      console.log('Firestore 设置已应用');
-    }
+    db = modules.getFirestore(app);
+    console.log('Firestore 初始化成功');
     
     // 初始化集合引用
-    if (!salesCollection) {
-      salesCollection = db.collection('salesData');
-      console.log('销售数据集合已初始化');
-    }
+    salesCollection = modules.collection(db, 'salesData');
+    console.log('销售数据集合已初始化');
     
     // 测试集合访问
-    try {
-      const testQuery = await salesCollection.limit(1).get();
-      console.log('集合访问测试成功，记录数:', testQuery.size);
-    } catch (error) {
-      console.error('集合访问测试失败:', error);
-      throw new Error('无法访问数据集合，请检查网络连接和权限设置');
-    }
+    const testQuery = modules.query(salesCollection, modules.limit(1));
+    await modules.getDocs(testQuery);
+    console.log('集合访问测试成功');
     
+    isInitialized = true;
     return true;
+    
   } catch (error) {
-    console.error('Firebase 初始化过程中出错:', error);
+    console.error('Firebase 初始化失败:', error);
+    isInitialized = false;
+    db = null;
+    salesCollection = null;
     throw error;
   }
 }
 
 // 设置实时数据监听
 function setupRealtimeListener(callback) {
+  if (!isInitialized || !db || !salesCollection) {
+    console.error('Firebase 未初始化');
+    return null;
+  }
+
   try {
     console.log('设置实时数据监听...');
+    const modules = window.firebaseModules;
     
-    if (!db || !salesCollection) {
-      throw new Error('Firebase未初始化，请先初始化Firebase');
-    }
-    
-    // 设置监听器
-    return salesCollection
-      .orderBy('date', 'desc')
-      .onSnapshot(
-        snapshot => {
-          console.log('收到实时数据更新:', snapshot.size + '条记录');
-          const data = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          callback(data);
-        },
-        error => {
-          console.error('实时数据监听错误:', error);
-          if (typeof window.appShowNotification === 'function') {
-            window.appShowNotification('数据同步失败: ' + error.message, 'error');
-          }
-        }
-      );
+    const q = modules.query(salesCollection, modules.orderBy('date', 'desc'));
+    return modules.onSnapshot(q,
+      snapshot => {
+        console.log('收到实时数据更新:', snapshot.size + '条记录');
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        callback(data);
+      },
+      error => {
+        console.error('实时数据监听错误:', error);
+        showNotification('数据同步失败: ' + error.message, 'error');
+      }
+    );
   } catch (error) {
     console.error('设置数据监听失败:', error);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('无法设置数据监听: ' + error.message, 'error');
-    }
+    showNotification('无法设置数据监听: ' + error.message, 'error');
     return null;
   }
 }
@@ -105,23 +95,21 @@ function setupRealtimeListener(callback) {
 // 获取所有销售数据
 async function fetchSalesData() {
   try {
-    if (!db || !salesCollection) {
-      throw new Error('Firebase未初始化，请先初始化Firebase');
+    if (!isInitialized || !db || !salesCollection) {
+      throw new Error('Firebase未初始化');
     }
     
-    const snapshot = await salesCollection
-      .orderBy('date', 'desc')
-      .get();
+    const modules = window.firebaseModules;
+    const q = modules.query(salesCollection, modules.orderBy('date', 'desc'));
+    const snapshot = await modules.getDocs(q);
     
     return snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     }));
   } catch (error) {
-    console.error('获取数据时发生错误:', error);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('获取数据失败: ' + error.message, 'error');
-    }
+    console.error('获取数据失败:', error);
+    showNotification('获取数据失败: ' + error.message, 'error');
     return [];
   }
 }
@@ -129,20 +117,17 @@ async function fetchSalesData() {
 // 添加销售记录
 async function addSalesRecord(record) {
   try {
-    if (!db || !salesCollection) {
-      throw new Error('Firebase未初始化，请先初始化Firebase');
+    if (!isInitialized || !db || !salesCollection) {
+      throw new Error('Firebase未初始化');
     }
     
-    const docRef = await salesCollection.add(record);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('数据添加成功！');
-    }
+    const modules = window.firebaseModules;
+    const docRef = await modules.addDoc(salesCollection, record);
+    showNotification('数据添加成功！');
     return docRef.id;
   } catch (error) {
-    console.error('添加数据时发生错误:', error);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('添加数据失败: ' + error.message, 'error');
-    }
+    console.error('添加数据失败:', error);
+    showNotification('添加数据失败: ' + error.message, 'error');
     return null;
   }
 }
@@ -150,20 +135,18 @@ async function addSalesRecord(record) {
 // 更新销售记录
 async function updateSalesRecord(id, updatedRecord) {
   try {
-    if (!db || !salesCollection) {
-      throw new Error('Firebase未初始化，请先初始化Firebase');
+    if (!isInitialized || !db || !salesCollection) {
+      throw new Error('Firebase未初始化');
     }
     
-    await salesCollection.doc(id).update(updatedRecord);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('数据更新成功！');
-    }
+    const modules = window.firebaseModules;
+    const docRef = modules.doc(db, 'salesData', id);
+    await modules.updateDoc(docRef, updatedRecord);
+    showNotification('数据更新成功！');
     return true;
   } catch (error) {
-    console.error('更新数据时发生错误:', error);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('更新数据失败: ' + error.message, 'error');
-    }
+    console.error('更新数据失败:', error);
+    showNotification('更新数据失败: ' + error.message, 'error');
     return false;
   }
 }
@@ -171,20 +154,18 @@ async function updateSalesRecord(id, updatedRecord) {
 // 删除销售记录
 async function deleteSalesRecord(id) {
   try {
-    if (!db || !salesCollection) {
-      throw new Error('Firebase未初始化，请先初始化Firebase');
+    if (!isInitialized || !db || !salesCollection) {
+      throw new Error('Firebase未初始化');
     }
     
-    await salesCollection.doc(id).delete();
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('数据删除成功！');
-    }
+    const modules = window.firebaseModules;
+    const docRef = modules.doc(db, 'salesData', id);
+    await modules.deleteDoc(docRef);
+    showNotification('数据删除成功！');
     return true;
   } catch (error) {
-    console.error('删除数据时发生错误:', error);
-    if (typeof window.appShowNotification === 'function') {
-      window.appShowNotification('删除数据失败: ' + error.message, 'error');
-    }
+    console.error('删除数据失败:', error);
+    showNotification('删除数据失败: ' + error.message, 'error');
     return false;
   }
 }
@@ -215,4 +196,12 @@ window.addEventListener('load', async () => {
       window.appShowNotification('初始化失败: ' + error.message, 'error');
     }
   }
-}); 
+});
+
+// 导出所需的函数
+window.initializeFirebase = initializeFirebase;
+window.setupRealtimeListener = setupRealtimeListener;
+window.addSalesRecord = addSalesRecord;
+window.updateSalesRecord = updateSalesRecord;
+window.deleteSalesRecord = deleteSalesRecord;
+window.fetchSalesData = fetchSalesData; 
